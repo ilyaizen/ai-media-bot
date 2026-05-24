@@ -1,0 +1,9 @@
+posted_videos.json
+ai_media_bot.log
+.env
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.DS_Store

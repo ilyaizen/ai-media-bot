@@ -1,0 +1,31 @@
+[Unit]
+Description=AI Media Discord Bot
+Documentation=https://github.com/ilyaizen/ai-media-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aimediabot
+Group=aimediabot
+WorkingDirectory=/srv/apps/ai-media-bot
+EnvironmentFile=-/srv/apps/ai-media-bot/.env
+ExecCondition=/srv/apps/ai-media-bot/scripts/preflight.sh
+ExecStart=/srv/apps/ai-media-bot/venv/bin/python /srv/apps/ai-media-bot/main.py
+Restart=always
+RestartSec=15
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+# Hardening. Needs outbound HTTPS and write access only to its own app dir.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/apps/ai-media-bot
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
