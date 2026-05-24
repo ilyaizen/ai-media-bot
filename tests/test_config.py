@@ -31,6 +31,13 @@ class ConfigTests(unittest.TestCase):
             channels = main.channels_from_env()
         self.assertEqual([(channel.channel_id, channel.name) for channel in channels], [("UCone", "One"), ("UCtwo", "Two")])
 
+    def test_fetch_all_videos_sorts_newest_first(self):
+        older = main.YouTubeVideo("old", "Old", "https://example.com/old", "UCone", "One", "Mon, 01 Jan 2024 00:00:00 GMT")
+        newer = main.YouTubeVideo("new", "New", "https://example.com/new", "UCtwo", "Two", "Mon, 01 Jan 2025 00:00:00 GMT")
+        with patch.object(main, "fetch_channel_videos", side_effect=[[older], [newer]]):
+            videos = main.fetch_all_videos([main.YouTubeChannel("UCone", "One"), main.YouTubeChannel("UCtwo", "Two")])
+        self.assertEqual([video.video_id for video in videos], ["new", "old"])
+
 
 if __name__ == "__main__":
     unittest.main()

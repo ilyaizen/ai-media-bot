@@ -5,6 +5,7 @@ import os
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlencode
@@ -12,7 +13,8 @@ from urllib.parse import urlencode
 import discord
 import feedparser
 import requests
-from discord.ext import commands, tasks
+from discord import app_commands
+from discord.ext import tasks
 from dotenv import load_dotenv
 from requests import RequestException
 
@@ -25,11 +27,11 @@ LOG_FILE = Path(os.getenv("LOG_FILE", APP_DIR / "ai_media_bot.log"))
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 DISCORD_CHANNEL_ID_RAW = os.getenv("DISCORD_CHANNEL_ID", os.getenv("CHANNEL_ID", "")).strip()
+DISCORD_GUILD_ID_RAW = os.getenv("DISCORD_GUILD_ID", "").strip()
 CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "900"))
 MAX_POSTS_PER_CHECK = int(os.getenv("MAX_POSTS_PER_CHECK", "10"))
 POST_ON_FIRST_RUN = os.getenv("POST_ON_FIRST_RUN", "false").strip().lower() in {"1", "true", "yes", "on"}
 REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
-ENABLE_MESSAGE_CONTENT_INTENT = os.getenv("ENABLE_MESSAGE_CONTENT_INTENT", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 YOUTUBE_FEED_URL = "https://www.youtube.com/feeds/videos.xml"
 
@@ -170,6 +172,21 @@ def fetch_channel_videos(channel: YouTubeChannel) -> list[YouTubeVideo]:
     return videos
 
 
+def video_sort_key(video: YouTubeVideo) -> datetime:
+    if not video.published:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        parsed = parsedate_to_datetime(video.published)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except (TypeError, ValueError):
+        try:
+            return datetime.fromisoformat(video.published.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return datetime.min.replace(tzinfo=timezone.utc)
+
+
 def fetch_all_videos(channels: list[YouTubeChannel]) -> list[YouTubeVideo]:
     videos: list[YouTubeVideo] = []
     for channel in channels:
@@ -181,7 +198,7 @@ def fetch_all_videos(channels: list[YouTubeChannel]) -> list[YouTubeVideo]:
             logging.warning("Failed to fetch YouTube feed for %s: %s", channel.channel_id, exc)
         except Exception as exc:
             logging.error("Unexpected error fetching %s: %s\n%s", channel.channel_id, exc, traceback.format_exc())
-    return videos
+    return sorted(videos, key=video_sort_key, reverse=True)
 
 
 def format_video_message(video: YouTubeVideo) -> str:
@@ -190,8 +207,8 @@ def format_video_message(video: YouTubeVideo) -> str:
 
 
 intents = discord.Intents.default()
-intents.message_content = ENABLE_MESSAGE_CONTENT_INTENT
-bot = commands.Bot(command_prefix="!", intents=intents)
+client = discord.Client(intents=intents)
+tree = app_commands.CommandTree(client)
 posted_video_ids: set[str] = set()
 configured_channels: list[YouTubeChannel] = []
 
@@ -200,6 +217,12 @@ def get_discord_channel_id() -> int:
     if not DISCORD_CHANNEL_ID_RAW:
         raise ValueError("DISCORD_CHANNEL_ID is missing")
     return int(DISCORD_CHANNEL_ID_RAW)
+
+
+def get_discord_guild_id() -> int | None:
+    if not DISCORD_GUILD_ID_RAW:
+        return None
+    return int(DISCORD_GUILD_ID_RAW)
 
 
 async def post_new_videos(manual: bool = False) -> tuple[int, int]:
@@ -221,7 +244,7 @@ async def post_new_videos(manual: bool = False) -> tuple[int, int]:
         return 0, len(videos)
 
     new_videos = list(reversed(new_videos))[:MAX_POSTS_PER_CHECK]
-    channel = bot.get_channel(get_discord_channel_id())
+    channel = client.get_channel(get_discord_channel_id())
     if channel is None:
         logging.error("Could not find Discord channel %s", DISCORD_CHANNEL_ID_RAW)
         return 0, len(videos)
@@ -246,13 +269,24 @@ async def post_new_videos(manual: bool = False) -> tuple[int, int]:
     return posted_count, len(videos)
 
 
-@bot.event
+@client.event
 async def on_ready() -> None:
     global posted_video_ids, configured_channels
     posted_video_ids = load_state()
     configured_channels = load_channels()
-    logging.info("Logged in as %s (%s)", bot.user, bot.user.id if bot.user else "unknown")
+    logging.info("Logged in as %s (%s)", client.user, client.user.id if client.user else "unknown")
     logging.info("Loaded %s posted video IDs and %s YouTube channels", len(posted_video_ids), len(configured_channels))
+
+    guild_id = get_discord_guild_id()
+    if guild_id:
+        guild = discord.Object(id=guild_id)
+        tree.copy_global_to(guild=guild)
+        synced = await tree.sync(guild=guild)
+        logging.info("Synced %s slash commands to guild %s", len(synced), guild_id)
+    else:
+        synced = await tree.sync()
+        logging.info("Synced %s global slash commands", len(synced))
+
     if not media_check_task.is_running():
         media_check_task.start()
 
@@ -267,38 +301,53 @@ async def media_check_task() -> None:
 
 @media_check_task.before_loop
 async def before_media_check() -> None:
-    await bot.wait_until_ready()
+    await client.wait_until_ready()
 
 
-@bot.command(name="testmedia")
-async def test_media(ctx: commands.Context) -> None:
-    await ctx.send(f"AI Media Bot is running. Tracking {len(configured_channels)} YouTube channels.")
+async def is_application_owner(user: discord.abc.User) -> bool:
+    app_info = await client.application_info()
+    if app_info.owner and app_info.owner.id == user.id:
+        return True
+    if app_info.team:
+        return any(member.id == user.id for member in app_info.team.members)
+    return False
 
 
-@bot.command(name="mediachannels")
-async def media_channels(ctx: commands.Context) -> None:
+@tree.command(name="testmedia", description="Check whether AI Media Bot is running.")
+async def test_media(interaction: discord.Interaction) -> None:
+    await interaction.response.send_message(
+        f"AI Media Bot is running. Tracking {len(configured_channels)} YouTube channels.",
+        ephemeral=True,
+    )
+
+
+@tree.command(name="mediachannels", description="List the YouTube channels AI Media Bot tracks.")
+async def media_channels(interaction: discord.Interaction) -> None:
     if not configured_channels:
-        await ctx.send("No YouTube channels configured.")
+        await interaction.response.send_message("No YouTube channels configured.", ephemeral=True)
         return
     lines = [f"- {channel.name or channel.channel_id} (`{channel.channel_id}`)" for channel in configured_channels]
-    await ctx.send("Tracked YouTube channels:\n" + "\n".join(lines[:25]))
+    await interaction.response.send_message("Tracked YouTube channels:\n" + "\n".join(lines[:25]), ephemeral=True)
 
 
-@bot.command(name="checkmedia")
-@commands.is_owner()
-async def check_media(ctx: commands.Context) -> None:
-    await ctx.send("Checking YouTube feeds now...")
+@tree.command(name="checkmedia", description="Owner-only: check YouTube feeds now and post new videos.")
+async def check_media(interaction: discord.Interaction) -> None:
+    if not await is_application_owner(interaction.user):
+        await interaction.response.send_message("Owner-only command.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
     posted_count, seen_count = await post_new_videos(manual=True)
-    await ctx.send(f"Done. Posted {posted_count} new videos. Saw {seen_count} videos across configured feeds.")
+    await interaction.followup.send(f"Done. Posted {posted_count} new videos. Saw {seen_count} videos across configured feeds.", ephemeral=True)
 
 
-@bot.command(name="latestmedia")
-async def latest_media(ctx: commands.Context) -> None:
+@tree.command(name="latestmedia", description="Post the latest video from the configured YouTube feeds.")
+async def latest_media(interaction: discord.Interaction) -> None:
+    await interaction.response.defer()
     videos = fetch_all_videos(configured_channels)
     if not videos:
-        await ctx.send("No videos found.")
+        await interaction.followup.send("No videos found.")
         return
-    await ctx.send(format_video_message(videos[0]))
+    await interaction.followup.send(format_video_message(videos[0]))
 
 
 def validate_config() -> None:
@@ -314,7 +363,7 @@ if __name__ == "__main__":
     try:
         validate_config()
         logging.info("Starting AI Media Bot...")
-        bot.run(DISCORD_TOKEN, log_handler=None)
+        client.run(DISCORD_TOKEN, log_handler=None)
     except Exception as exc:
         logging.critical("Bot failed to start: %s\n%s", exc, traceback.format_exc())
         raise
