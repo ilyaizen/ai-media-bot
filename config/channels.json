@@ -1,14 +1,30 @@
 [
   {
-    "name": "Fireship",
-    "channel_id": "UC2Xd-TjJByJyK2w1zNwY0zQ"
+    "channel_id": "UCsrVDPJBYeXItETFHG0qzyw",
+    "name": "New Channel"
   },
   {
-    "name": "AI Search",
-    "channel_id": "UCIgnGlGkVRhd4qNFcEwLL4A"
+    "channel_id": "UChpleBmo18P08aKCIgti38g",
+    "name": "Matt Wolfe"
   },
   {
-    "name": "Riley Brown",
-    "channel_id": "UCMcoud_ZW7cfxeIugBflSBw"
+    "channel_id": "UCMcoud_ZW7cfxeIugBflSBw",
+    "name": "Riley Brown"
+  },
+  {
+    "channel_id": "UCIgnGlGkVRhd4qNFcEwLL4A",
+    "name": "AI Search"
+  },
+  {
+    "channel_id": "UC2Xd-TjJByJyK2w1zNwY0zQ",
+    "name": "Beyond Fireship"
+  },
+  {
+    "channel_id": "UC3iyLcDyYxk2nN7M5DsYaYQ",
+    "name": "Daniel | Tech & Data"
+  },
+  {
+    "channel_id": "UCtevzRsHEKhs-RK8pAqwSyQ",
+    "name": "Leon van Zyl"
   }
 ]

@@ -64,13 +64,9 @@ def split_csv(value: str) -> list[str]:
 
 def normalize_channel_id(value: str) -> str:
     value = value.strip()
-    if not value:
-        return ""
-    if value.startswith("http://") or value.startswith("https://"):
-        marker = "/channel/"
-        if marker in value:
-            return value.split(marker, 1)[1].split("/", 1)[0].split("?", 1)[0]
-    return value
+    if value.startswith("UC") and len(value) == 24:
+        return value
+    return ""
 
 
 def channels_from_env() -> list[YouTubeChannel]:
@@ -100,12 +96,15 @@ def channels_from_file(path: Path = CHANNELS_FILE) -> list[YouTubeChannel]:
             channel_id = normalize_channel_id(item)
             name = None
         elif isinstance(item, dict):
-            channel_id = normalize_channel_id(str(item.get("channel_id") or item.get("id") or item.get("url") or ""))
+            raw = str(item.get("channel_id") or item.get("id") or "")
+            channel_id = normalize_channel_id(raw)
             name = item.get("name")
         else:
             raise ValueError(f"Invalid channel entry in {path}: {item!r}")
-        if channel_id:
+        if channel_id and channel_id.startswith("UC") and len(channel_id) == 24:
             channels.append(YouTubeChannel(channel_id=channel_id, name=name))
+        else:
+            logging.warning("Skipping invalid channel entry in %s: %s (resolved: %s)", path, item, channel_id)
     return channels
 
 
@@ -144,16 +143,24 @@ def save_state(posted_video_ids: Iterable[str], path: Path = STATE_FILE) -> None
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-def fetch_channel_videos(channel: YouTubeChannel) -> list[YouTubeVideo]:
-    url = f"{YOUTUBE_FEED_URL}?{urlencode({'channel_id': channel.channel_id})}"
-    response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS, headers={"User-Agent": "ai-media-bot/0.1"})
+def fetch_channel_info(channel_id: str) -> tuple[str | None, list[YouTubeVideo]]:
+    url = f"{YOUTUBE_FEED_URL}?{urlencode({'channel_id': channel_id})}"
+    response = requests.get(
+        url,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        },
+    )
     response.raise_for_status()
 
     parsed = feedparser.parse(response.text)
     if parsed.bozo:
-        logging.warning("Feed parse warning for %s: %s", channel.channel_id, parsed.bozo_exception)
+        logging.warning("Feed parse warning for %s: %s", channel_id, parsed.bozo_exception)
 
-    fallback_channel_name = channel.name or parsed.feed.get("title") or channel.channel_id
+    channel_name = parsed.feed.get("title")
+    fallback_channel_name = channel_name or channel_id
+
     videos: list[YouTubeVideo] = []
     for entry in parsed.entries:
         video_id = entry.get("yt_videoid") or entry.get("id", "").split(":")[-1]
@@ -164,11 +171,28 @@ def fetch_channel_videos(channel: YouTubeChannel) -> list[YouTubeVideo]:
                 video_id=video_id,
                 title=entry.get("title", "Untitled video"),
                 url=entry.get("link") or f"https://www.youtube.com/watch?v={video_id}",
-                channel_id=channel.channel_id,
+                channel_id=channel_id,
                 channel_name=fallback_channel_name,
                 published=entry.get("published"),
             )
         )
+    return channel_name, videos
+
+
+def fetch_channel_videos(channel: YouTubeChannel) -> list[YouTubeVideo]:
+    channel_name, videos = fetch_channel_info(channel.channel_id)
+    if channel.name and videos:
+        videos = [
+            YouTubeVideo(
+                video_id=v.video_id,
+                title=v.title,
+                url=v.url,
+                channel_id=v.channel_id,
+                channel_name=channel.name,
+                published=v.published,
+            )
+            for v in videos
+        ]
     return videos
 
 
@@ -202,8 +226,7 @@ def fetch_all_videos(channels: list[YouTubeChannel]) -> list[YouTubeVideo]:
 
 
 def format_video_message(video: YouTubeVideo) -> str:
-    published = f"\nPublished: {video.published}" if video.published else ""
-    return f"📺 **{video.channel_name}** uploaded:\n{video.title}{published}\n{video.url}"
+    return f"📺 **{video.channel_name}** uploaded:\n{video.title}\n{video.url}"
 
 
 intents = discord.Intents.default()
@@ -348,6 +371,109 @@ async def latest_media(interaction: discord.Interaction) -> None:
         await interaction.followup.send("No videos found.")
         return
     await interaction.followup.send(format_video_message(videos[0]))
+
+
+@tree.command(name="addchannel", description="Owner-only: Add a new YouTube channel to track by ID.")
+@app_commands.describe(id="The YouTube channel ID (starts with UC, 24 characters)")
+async def add_channel(interaction: discord.Interaction, id: str) -> None:
+    if not await is_application_owner(interaction.user):
+        await interaction.response.send_message("Owner-only command.", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    global configured_channels
+
+    resolved_id = normalize_channel_id(id)
+
+    if not resolved_id:
+        await interaction.followup.send(
+            f"❌ `{id}` is not a valid YouTube channel ID. It must start with 'UC' and be exactly 24 characters long.",
+            ephemeral=True,
+        )
+        return
+
+    # Try fetching the channel name from the feed before saving
+    channel_name = None
+    videos = []
+    try:
+        channel_name, videos = fetch_channel_info(resolved_id)
+    except Exception:
+        pass
+
+    # Check if channel already exists in channels.json
+    try:
+        if CHANNELS_FILE.exists():
+            data = json.loads(CHANNELS_FILE.read_text())
+        else:
+            data = []
+        if not isinstance(data, list):
+            data = []
+
+        if any(
+            (isinstance(d, dict) and d.get("channel_id") == resolved_id)
+            or (isinstance(d, str) and d == resolved_id)
+            for d in data
+        ):
+            await interaction.followup.send(
+                f"Channel `{resolved_id}` (`{channel_name or 'unknown'}`) is already tracked.",
+                ephemeral=True,
+            )
+            return
+
+        entry = {"channel_id": resolved_id, "name": channel_name or "New Channel"}
+        data.append(entry)
+        CHANNELS_FILE.write_text(json.dumps(data, indent=2) + "\n")
+        configured_channels = load_channels()
+
+        # Fetch and post latest video
+        if videos:
+            discord_channel = client.get_channel(get_discord_channel_id())
+            if discord_channel:
+                await discord_channel.send(
+                    f"🆕 Now tracking **{channel_name}**!"
+                )
+                await discord_channel.send(
+                    f"Latest video:\n{format_video_message(videos[0])}"
+                )
+            await interaction.followup.send(
+                f"✅ Added **{channel_name}** (`{resolved_id}`).",
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send(
+                f"✅ Added `{resolved_id}` (`{channel_name or 'unknown'}`). "
+                "No videos found in feed — check the channel ID.",
+                ephemeral=True,
+            )
+
+    except Exception as e:
+        await interaction.followup.send(f"Error adding channel: {e}", ephemeral=True)
+
+
+@tree.command(name="delchannel", description="Owner-only: Remove a YouTube channel from tracking.")
+@app_commands.describe(channel_id="The channel ID (UC...) to remove")
+async def del_channel(interaction: discord.Interaction, channel_id: str) -> None:
+    if not await is_application_owner(interaction.user):
+        await interaction.response.send_message("Owner-only command.", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    global configured_channels
+    try:
+        data = json.loads(CHANNELS_FILE.read_text())
+        new_data = [d for d in data if d.get("channel_id") != channel_id]
+        
+        if len(data) == len(new_data):
+            await interaction.followup.send(f"Channel `{channel_id}` not found.", ephemeral=True)
+            return
+            
+        CHANNELS_FILE.write_text(json.dumps(new_data, indent=2))
+        configured_channels = load_channels()
+        await interaction.followup.send(f"Removed channel: `{channel_id}`", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"Error removing channel: {e}", ephemeral=True)
+
 
 
 def validate_config() -> None:
