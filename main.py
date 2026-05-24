@@ -375,7 +375,7 @@ async def latest_media(interaction: discord.Interaction) -> None:
 
 @tree.command(name="addchannel", description="Owner-only: Add a new YouTube channel to track by ID.")
 @app_commands.describe(channel_id="The YouTube channel ID (starts with UC, 24 characters)")
-async def add_channel(interaction: discord.Interaction, id: str) -> None:
+async def add_channel(interaction: discord.Interaction, channel_id: str) -> None:
     if not await is_application_owner(interaction.user):
         await interaction.response.send_message("Owner-only command.", ephemeral=True)
         return
@@ -383,11 +383,11 @@ async def add_channel(interaction: discord.Interaction, id: str) -> None:
     await interaction.response.defer(ephemeral=True)
     global configured_channels
 
-    resolved_id = normalize_channel_id(id)
+    resolved_id = normalize_channel_id(channel_id)
 
     if not resolved_id:
         await interaction.followup.send(
-            f"❌ `{id}` is not a valid YouTube channel ID. It must start with 'UC' and be exactly 24 characters long.",
+            f"❌ `{channel_id}` is not a valid YouTube channel ID. It must start with 'UC' and be exactly 24 characters long.",
             ephemeral=True,
         )
         return
