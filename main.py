@@ -143,15 +143,19 @@ def save_state(posted_video_ids: Iterable[str], path: Path = STATE_FILE) -> None
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-def scrape_channel_name(channel_id: str) -> str | None:
-    """Scrape the channel name directly from the YouTube channel page, bypassing EU consent redirects if necessary."""
+def scrape_channel_videos(channel_id: str) -> tuple[str | None, list[dict]]:
+    """Scrape recent videos and channel title from the YouTube channel /videos page, bypassing EU consent redirects."""
     session = requests.Session()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
     }
+    
+    channel_name = None
+    videos = []
+    
     try:
-        url = f"https://www.youtube.com/channel/{channel_id}"
+        url = f"https://www.youtube.com/channel/{channel_id}/videos"
         r = session.get(url, headers=headers, allow_redirects=True, timeout=15)
         
         html = ""
@@ -175,26 +179,58 @@ def scrape_channel_name(channel_id: str) -> str | None:
                 save_headers = headers.copy()
                 save_headers["Referer"] = r.url
                 r_save = session.post(action_url, headers=save_headers, data=data, allow_redirects=True, timeout=15)
-                if r_save.status_code == 200 and "youtube.com/channel" in r_save.url:
+                if r_save.status_code == 200 and "youtube.com" in r_save.url:
                     html = r_save.text
         else:
             html = r.text
 
         if html:
             import re
-            # Try to grab the channel title from OpenGraph metadata
+            import json
+            
+            # Extract channel title
             og_match = re.search(r'property="og:title" content="(.*?)"', html)
             if og_match:
-                return og_match.group(1).strip()
-            # Fallback to <title> tag
-            title_match = re.search(r"<title>(.*?)</title>", html)
-            if title_match:
-                title = title_match.group(1).replace("- YouTube", "").strip()
-                if title:
-                    return title
+                channel_name = og_match.group(1).strip()
+            else:
+                title_match = re.search(r"<title>(.*?)</title>", html)
+                if title_match:
+                    channel_name = title_match.group(1).replace("- YouTube", "").strip()
+
+            # Extract ytInitialData JSON
+            yt_initial_data_match = re.search(r"var ytInitialData\s*=\s*(.*?);</script>", html)
+            if not yt_initial_data_match:
+                yt_initial_data_match = re.search(r"window\[\"ytInitialData\"\]\s*=\s*(.*?);</script>", html)
+
+            if yt_initial_data_match:
+                data = json.loads(yt_initial_data_match.group(1))
+                
+                def extract_lockups(node):
+                    if isinstance(node, dict):
+                        if "lockupViewModel" in node:
+                            model = node["lockupViewModel"]
+                            content_id = model.get("contentId")
+                            content_type = model.get("contentType")
+                            if content_type == "LOCKUP_CONTENT_TYPE_VIDEO" and content_id:
+                                title_node = model.get("metadata", {}).get("lockupMetadataViewModel", {}).get("title", {})
+                                title = title_node.get("content") or ""
+                                if content_id and title:
+                                    videos.append({
+                                        "video_id": content_id,
+                                        "title": title,
+                                        "published": None
+                                    })
+                        for k, v in node.items():
+                            extract_lockups(v)
+                    elif isinstance(node, list):
+                        for item in node:
+                            extract_lockups(item)
+                
+                extract_lockups(data)
     except Exception as exc:
-        logging.warning("Failed to scrape channel name for %s: %s", channel_id, exc)
-    return None
+        logging.warning("Failed to scrape channel videos for %s: %s", channel_id, exc)
+        
+    return channel_name, videos
 
 
 def fetch_channel_info(channel_id: str) -> tuple[str | None, list[YouTubeVideo]]:
@@ -233,24 +269,26 @@ def fetch_channel_info(channel_id: str) -> tuple[str | None, list[YouTubeVideo]]
     except Exception as exc:
         logging.warning("Feed fetch failed for %s: %s", channel_id, exc)
 
-    # 2. If we couldn't get the channel name from the feed, fallback to scraping
-    if not channel_name:
-        scraped_name = scrape_channel_name(channel_id)
+    # 2. If we couldn't get the channel name or videos from the feed, fallback to scraping
+    if not channel_name or not videos:
+        scraped_name, scraped_videos = scrape_channel_videos(channel_id)
         if scraped_name:
             channel_name = scraped_name
-            # If we fetched some videos but couldn't get the channel name, update them
-            if videos:
-                videos = [
-                    YouTubeVideo(
-                        video_id=v.video_id,
-                        title=v.title,
-                        url=v.url,
-                        channel_id=v.channel_id,
-                        channel_name=channel_name,
-                        published=v.published,
-                    )
-                    for v in videos
-                ]
+        
+        # If we got scraped videos, let's map them to YouTubeVideo objects
+        if scraped_videos:
+            fallback_channel_name = channel_name or channel_id
+            videos = [
+                YouTubeVideo(
+                    video_id=v["video_id"],
+                    title=v["title"],
+                    url=f"https://www.youtube.com/watch?v={v['video_id']}",
+                    channel_id=channel_id,
+                    channel_name=fallback_channel_name,
+                    published=v.get("published"),
+                )
+                for v in scraped_videos
+            ]
 
     return channel_name, videos
 
