@@ -1,19 +1,11 @@
 [
   {
-    "channel_id": "UCsrVDPJBYeXItETFHG0qzyw",
-    "name": "New Channel"
-  },
-  {
     "channel_id": "UChpleBmo18P08aKCIgti38g",
     "name": "Matt Wolfe"
   },
   {
     "channel_id": "UCMcoud_ZW7cfxeIugBflSBw",
     "name": "Riley Brown"
-  },
-  {
-    "channel_id": "UCIgnGlGkVRhd4qNFcEwLL4A",
-    "name": "AI Search"
   },
   {
     "channel_id": "UC2Xd-TjJByJyK2w1zNwY0zQ",
@@ -26,5 +18,29 @@
   {
     "channel_id": "UCtevzRsHEKhs-RK8pAqwSyQ",
     "name": "Leon van Zyl"
+  },
+  {
+    "channel_id": "UCsrVDPJBYeXItETFHG0qzyw",
+    "name": "Web Dev Cody"
+  },
+  {
+    "channel_id": "UCIgnGlGkVRhd4qNFcEwLL4A",
+    "name": "AI Search"
+  },
+  {
+    "channel_id": "UCoYzQqZNCRqqAomJwJ6yEdg",
+    "name": "Anthony Sistilli"
+  },
+  {
+    "channel_id": "UCHkzp52CldSPZqU5T49mOnA",
+    "name": "Mark Kashef"
+  },
+  {
+    "channel_id": "UC0m81bQuthaQZmFbXEY9QSw",
+    "name": "AICodeKing"
+  },
+  {
+    "channel_id": "UCkjV1lNEBpPewZHOSExZQMg",
+    "name": "Weaver"
   }
 ]

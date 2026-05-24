@@ -143,39 +143,115 @@ def save_state(posted_video_ids: Iterable[str], path: Path = STATE_FILE) -> None
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
+def scrape_channel_name(channel_id: str) -> str | None:
+    """Scrape the channel name directly from the YouTube channel page, bypassing EU consent redirects if necessary."""
+    session = requests.Session()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    try:
+        url = f"https://www.youtube.com/channel/{channel_id}"
+        r = session.get(url, headers=headers, allow_redirects=True, timeout=15)
+        
+        html = ""
+        if "consent.youtube.com" in r.url:
+            import re
+            form_matches = re.findall(r"<form(.*?)</form>", r.text, re.DOTALL)
+            if form_matches and len(form_matches) > 1:
+                # Use Form 1 (the accept cookies form)
+                form_content = form_matches[1]
+                action_match = re.search(r'action="(.*?)"', form_content)
+                action_url = action_match.group(1) if action_match else "https://consent.youtube.com/save"
+                
+                # Extract hidden fields
+                inputs = re.findall(r'<input type="hidden" name="(.*?)" value="(.*?)"', form_content)
+                data = {name: val for name, val in inputs}
+                data["set_ytc"] = "true"
+                data["set_apyt"] = "true"
+                data["set_eom"] = "false"
+                
+                # Post consent submission
+                save_headers = headers.copy()
+                save_headers["Referer"] = r.url
+                r_save = session.post(action_url, headers=save_headers, data=data, allow_redirects=True, timeout=15)
+                if r_save.status_code == 200 and "youtube.com/channel" in r_save.url:
+                    html = r_save.text
+        else:
+            html = r.text
+
+        if html:
+            import re
+            # Try to grab the channel title from OpenGraph metadata
+            og_match = re.search(r'property="og:title" content="(.*?)"', html)
+            if og_match:
+                return og_match.group(1).strip()
+            # Fallback to <title> tag
+            title_match = re.search(r"<title>(.*?)</title>", html)
+            if title_match:
+                title = title_match.group(1).replace("- YouTube", "").strip()
+                if title:
+                    return title
+    except Exception as exc:
+        logging.warning("Failed to scrape channel name for %s: %s", channel_id, exc)
+    return None
+
+
 def fetch_channel_info(channel_id: str) -> tuple[str | None, list[YouTubeVideo]]:
-    url = f"{YOUTUBE_FEED_URL}?{urlencode({'channel_id': channel_id})}"
-    response = requests.get(
-        url,
-        timeout=REQUEST_TIMEOUT_SECONDS,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        },
-    )
-    response.raise_for_status()
-
-    parsed = feedparser.parse(response.text)
-    if parsed.bozo:
-        logging.warning("Feed parse warning for %s: %s", channel_id, parsed.bozo_exception)
-
-    channel_name = parsed.feed.get("title")
-    fallback_channel_name = channel_name or channel_id
-
+    channel_name = None
     videos: list[YouTubeVideo] = []
-    for entry in parsed.entries:
-        video_id = entry.get("yt_videoid") or entry.get("id", "").split(":")[-1]
-        if not video_id:
-            continue
-        videos.append(
-            YouTubeVideo(
-                video_id=video_id,
-                title=entry.get("title", "Untitled video"),
-                url=entry.get("link") or f"https://www.youtube.com/watch?v={video_id}",
-                channel_id=channel_id,
-                channel_name=fallback_channel_name,
-                published=entry.get("published"),
-            )
+    
+    # 1. Try to fetch channel feed
+    try:
+        url = f"{YOUTUBE_FEED_URL}?{urlencode({'channel_id': channel_id})}"
+        response = requests.get(
+            url,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            },
         )
+        if response.status_code == 200:
+            parsed = feedparser.parse(response.text)
+            if not parsed.bozo:
+                channel_name = parsed.feed.get("title")
+                fallback_channel_name = channel_name or channel_id
+                for entry in parsed.entries:
+                    video_id = entry.get("yt_videoid") or entry.get("id", "").split(":")[-1]
+                    if not video_id:
+                        continue
+                    videos.append(
+                        YouTubeVideo(
+                            video_id=video_id,
+                            title=entry.get("title", "Untitled video"),
+                            url=entry.get("link") or f"https://www.youtube.com/watch?v={video_id}",
+                            channel_id=channel_id,
+                            channel_name=fallback_channel_name,
+                            published=entry.get("published"),
+                        )
+                    )
+    except Exception as exc:
+        logging.warning("Feed fetch failed for %s: %s", channel_id, exc)
+
+    # 2. If we couldn't get the channel name from the feed, fallback to scraping
+    if not channel_name:
+        scraped_name = scrape_channel_name(channel_id)
+        if scraped_name:
+            channel_name = scraped_name
+            # If we fetched some videos but couldn't get the channel name, update them
+            if videos:
+                videos = [
+                    YouTubeVideo(
+                        video_id=v.video_id,
+                        title=v.title,
+                        url=v.url,
+                        channel_id=v.channel_id,
+                        channel_name=channel_name,
+                        published=v.published,
+                    )
+                    for v in videos
+                ]
+
     return channel_name, videos
 
 
