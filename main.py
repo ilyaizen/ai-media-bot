@@ -29,6 +29,7 @@ CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "900"))
 MAX_POSTS_PER_CHECK = int(os.getenv("MAX_POSTS_PER_CHECK", "10"))
 POST_ON_FIRST_RUN = os.getenv("POST_ON_FIRST_RUN", "false").strip().lower() in {"1", "true", "yes", "on"}
 REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
+ENABLE_MESSAGE_CONTENT_INTENT = os.getenv("ENABLE_MESSAGE_CONTENT_INTENT", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 YOUTUBE_FEED_URL = "https://www.youtube.com/feeds/videos.xml"
 
@@ -189,7 +190,7 @@ def format_video_message(video: YouTubeVideo) -> str:
 
 
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = ENABLE_MESSAGE_CONTENT_INTENT
 bot = commands.Bot(command_prefix="!", intents=intents)
 posted_video_ids: set[str] = set()
 configured_channels: list[YouTubeChannel] = []
