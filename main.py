@@ -374,7 +374,7 @@ async def latest_media(interaction: discord.Interaction) -> None:
 
 
 @tree.command(name="addchannel", description="Owner-only: Add a new YouTube channel to track by ID.")
-@app_commands.describe(id="The YouTube channel ID (starts with UC, 24 characters)")
+@app_commands.describe(channel_id="The YouTube channel ID (starts with UC, 24 characters)")
 async def add_channel(interaction: discord.Interaction, id: str) -> None:
     if not await is_application_owner(interaction.user):
         await interaction.response.send_message("Owner-only command.", ephemeral=True)
@@ -451,7 +451,7 @@ async def add_channel(interaction: discord.Interaction, id: str) -> None:
 
 
 @tree.command(name="delchannel", description="Owner-only: Remove a YouTube channel from tracking.")
-@app_commands.describe(channel_id="The channel ID (UC...) to remove")
+@app_commands.describe(channel_id="The YouTube channel ID (starts with UC, 24 characters)")
 async def del_channel(interaction: discord.Interaction, channel_id: str) -> None:
     if not await is_application_owner(interaction.user):
         await interaction.response.send_message("Owner-only command.", ephemeral=True)
