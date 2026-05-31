@@ -1,0 +1,1 @@
+/root/workspace/HyperVault/projects/ai-media-bot/AGENTS.md
