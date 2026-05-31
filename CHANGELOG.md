@@ -1,1 +1,4 @@
-/root/workspace/HyperVault/projects/ai-media-bot/CHANGELOG.md
+# Changelog
+
+## Unreleased
+- Initial placeholder.

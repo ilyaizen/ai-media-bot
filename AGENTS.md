@@ -1,1 +1,3 @@
-/root/workspace/HyperVault/projects/ai-media-bot/AGENTS.md
+# ai-media-bot
+
+Canonical agent instructions live in HyperVault.
