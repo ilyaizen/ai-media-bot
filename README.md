@@ -1,22 +1,21 @@
-# AI Media Discord Bot
+# ai-media-bot
 
-Discord bot that watches a configured list of YouTube channels and posts newly uploaded videos to one Discord channel.
+Discord bot that watches a configurable list of YouTube channels and posts newly uploaded videos to one Discord channel.
 
-It uses YouTube's public RSS feeds, so no YouTube API key is needed.
+It uses YouTube's public RSS feeds first, then falls back to scraping the channel page when needed. No YouTube API key is required.
 
-## Behavior
+## What it does
 
-- Polls YouTube channel feeds every 15 minutes by default.
+- Polls tracked YouTube channels every 15 minutes by default.
 - Stores posted video IDs in `posted_videos.json`.
-- On first run, seeds existing feed videos without posting them, so it does not spam the server.
-- Posts only new videos after that.
-- Supports manual commands:
-  - `!testmedia` — health check
-  - `!mediachannels` — list tracked channels
-  - `!latestmedia` — show latest fetched video
-  - `!checkmedia` — owner-only manual check/post
+- Seeds existing videos on first run without spamming the server unless `POST_ON_FIRST_RUN=true`.
+- Supports these slash commands:
+  - `/testmedia` — health check
+  - `/mediachannels` — list tracked channels
+  - `/latestmedia` — show the latest fetched video
+  - `/checkmedia` — owner-only manual check/post
 
-## Local setup
+## Setup
 
 ```bash
 python3 -m venv venv
@@ -30,37 +29,48 @@ Edit `.env`:
 ```dotenv
 DISCORD_TOKEN=your_discord_bot_token
 DISCORD_CHANNEL_ID=123456789012345678
+# Optional overrides:
+# YOUTUBE_CHANNEL_IDS=UCxxxxxxxxxxxxxxxxxxxxxx,UCyyyyyyyyyyyyyyyyyyyyyy
+# YOUTUBE_CHANNEL_NAMES=Channel One,Channel Two
+# CHECK_INTERVAL_SECONDS=900
+# MAX_POSTS_PER_CHECK=10
+# POST_ON_FIRST_RUN=false
 ```
 
-Then add YouTube channels using either `config/channels.json`:
+Then add the tracked channels either in `config/channels.json`:
 
 ```json
 [
-  { "name": "Two Minute Papers", "channel_id": "UCbfYPyITQ-7l4upoX8nvctg" }
+  {
+    "name": "Two Minute Papers",
+    "channel_id": "UCbfYPyITQ-7l4upoX8nvctg"
+  }
 ]
 ```
 
-or `.env`:
+or via `.env` using the comma-separated `YOUTUBE_CHANNEL_IDS` list.
 
-```dotenv
-YOUTUBE_CHANNEL_IDS=UCbfYPyITQ-7l4upoX8nvctg,UCXZCJLdBC09xxGZ6gcdrc6A
-YOUTUBE_CHANNEL_NAMES=Two Minute Papers,Example Channel
-```
-
-Run:
+## Run locally
 
 ```bash
 ./venv/bin/python main.py
 ```
 
-## Discord setup notes
+## Discord setup
 
 In the Discord Developer Portal:
 
 1. Create a bot application.
-2. Enable **Message Content Intent** if you want prefix commands like `!testmedia`.
-3. Invite it with permission to read/send messages in the target channel.
-4. Copy the target Discord channel ID into `DISCORD_CHANNEL_ID`.
+2. Invite it with permission to read/send messages in the target channel.
+3. Register the bot's slash commands in the target guild if you want them to appear quickly.
+4. Put the target text channel ID in `DISCORD_CHANNEL_ID`.
+
+## Operational notes
+
+- `config/channels.json` is the important list. Keep it current when the bot should start/stop tracking channels.
+- `posted_videos.json` is the bot's memory. Delete it only if you intentionally want to reseed/repost.
+- `MAX_POSTS_PER_CHECK` is there to stop a backlog from dumping everything at once.
+- If YouTube changes its page structure, the fallback scraper may need maintenance.
 
 ## Server deployment
 
@@ -75,9 +85,3 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now aimediabot.service
 sudo journalctl -u aimediabot.service -f
 ```
-
-## Safety knobs
-
-- `POST_ON_FIRST_RUN=false` avoids dumping old videos into Discord on first boot.
-- `MAX_POSTS_PER_CHECK=10` caps bursts if the bot was offline.
-- Delete `posted_videos.json` only if you intentionally want to re-seed/repost depending on `POST_ON_FIRST_RUN`.
