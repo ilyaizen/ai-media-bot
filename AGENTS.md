@@ -10,7 +10,7 @@ Use the files in this repo as the source of truth for runtime behavior and deplo
 
 ## Things to keep current
 
-- `config/channels.json` when the tracked channel list changes.
+- `config/channels.json` is the unique tracked-channel list. Commit it regularly whenever the bot's subscribed channels change.
 - `posted_videos.json` only when you intentionally want to reseed or repost.
 
 ## Commands

@@ -67,7 +67,7 @@ In the Discord Developer Portal:
 
 ## Operational notes
 
-- `config/channels.json` is the important list. Keep it current when the bot should start/stop tracking channels.
+- `config/channels.json` is the unique tracked-channel list. Keep it under version control and commit it regularly whenever the tracked YouTube set changes.
 - `posted_videos.json` is the bot's memory. Delete it only if you intentionally want to reseed/repost.
 - `MAX_POSTS_PER_CHECK` is there to stop a backlog from dumping everything at once.
 - If YouTube changes its page structure, the fallback scraper may need maintenance.
